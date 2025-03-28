@@ -16,8 +16,7 @@ class DataProcessor:
         self.truck_specifications: Dict[str, Dict] = {
             '9.6': {'weight_capacity': 2.0, 'cost_per_km': 1, 'speed': 40},  # 2 tons
             '12.5': {'weight_capacity': 5.0, 'cost_per_km': 2, 'speed': 40}, # 5 tons
-            '16.5': {'weight_capacity': 10.0, 'cost_per_km': 3, 'speed': 40}, # 10 tons
-            '50.0': {'weight_capacity': 50.0, 'cost_per_km': 10, 'speed': 40} # 50 tons
+            '16.5': {'weight_capacity': 10.0, 'cost_per_km': 3, 'speed': 40}  # 10 tons
         }
         self.warehouse_location = "WAREHOUSE"
         self.warehouse_lat = 0.0

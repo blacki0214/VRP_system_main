@@ -153,12 +153,20 @@ class ORToolsMLOptimizer(BaseOptimizer):
         solutions = []
         
         # Vary parameters to get different solutions
-        time_limits = [10, 20, 30]  # seconds
+        time_limits = [30, 60, 90]  # Increased time limits
         strategies = [
             routing_enums_pb2.FirstSolutionStrategy.PARALLEL_CHEAPEST_INSERTION,
             routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC,
-            routing_enums_pb2.FirstSolutionStrategy.SAVINGS
+            routing_enums_pb2.FirstSolutionStrategy.SAVINGS,
+            routing_enums_pb2.FirstSolutionStrategy.CHRISTOFIDES  # Added more strategies
         ]
+        
+        # Get initial data model to determine available truck types
+        initial_data = self._create_data_model()
+        max_vehicles = len(initial_data['truck_types'])
+        
+        # Calculate base number of vehicles from initial data
+        base_vehicles = initial_data['num_vehicles']
         
         for i in range(num_variations):
             print(f"Generating solution variation {i+1}/{num_variations}")
@@ -170,20 +178,35 @@ class ORToolsMLOptimizer(BaseOptimizer):
             # Create data model with slight variations
             data = self._create_data_model()
             
-            # Modify some parameters randomly
-            data['num_vehicles'] = random.randint(
-                max(1, data['num_vehicles'] - 2),
-                data['num_vehicles'] + 2
-            )
+            # Try different vehicle counts around the base number
+            vehicle_counts = [
+                base_vehicles,  # Try base number
+                max(1, base_vehicles - 1),  # Try one less
+                min(base_vehicles + 1, max_vehicles),  # Try one more
+                max(1, base_vehicles - 2),  # Try two less
+                min(base_vehicles + 2, max_vehicles)   # Try two more
+            ]
             
-            # Solve with these parameters
-            solution = self._solve_or_tools(data, strategy, time_limit)
-            if solution:
-                solutions.append(solution)
+            # Try each vehicle count until we find a solution
+            for new_num_vehicles in vehicle_counts:
+                # Update truck types and capacities to match new vehicle count
+                data['num_vehicles'] = new_num_vehicles
+                data['truck_types'] = data['truck_types'][:new_num_vehicles]
+                data['vehicle_capacities'] = [
+                    float(self.data_processor.truck_specifications[t]['weight_capacity'])
+                    for t in data['truck_types']
+                ]
                 
-                # Only keep unique solutions
-                if len(solutions) >= num_variations:
+                # Solve with these parameters
+                solution = self._solve_or_tools(data, strategy, time_limit)
+                if solution:
+                    solutions.append(solution)
+                    print(f"Found solution with {new_num_vehicles} vehicles")
                     break
+            
+            # If we have enough solutions, stop
+            if len(solutions) >= num_variations:
+                break
         
         print(f"Generated {len(solutions)} OR-Tools solutions")
         return solutions
@@ -195,47 +218,56 @@ class ORToolsMLOptimizer(BaseOptimizer):
         Returns:
             Dictionary with problem data
         """
-        # Simplified data model
-        cities = list(self.data_processor.cities)[:100]  # Limit cities for efficiency
-        distance_matrix = self.data_processor.distance_matrix[:100, :100]  # Truncate matrix
+        # Use all cities but limit distance matrix for efficiency
+        cities = list(self.data_processor.cities)
+        max_cities = 200  # Increased from 100
+        if len(cities) > max_cities:
+            cities = cities[:max_cities]
+            distance_matrix = self.data_processor.distance_matrix[:max_cities, :max_cities]
+        else:
+            distance_matrix = self.data_processor.distance_matrix
         
-        # Get available truck types and match the number of vehicles
+        # Get available truck types
         truck_types = list(self.data_processor.truck_specifications.keys())
-        num_vehicles = min(len(cities), len(truck_types))  # Use minimum of cities or truck types
-        truck_types = truck_types[:num_vehicles]  # Limit truck types to match vehicle count
         
+        # Calculate number of vehicles based on total demand and truck capacities
+        total_demand = 0
         demands = [0] * len(cities)
         order_to_node = {}
         order_locations = {}
         
-        # Process orders
-        for _, row in self.data_processor.order_data.iloc[:200].iterrows():  # Limit orders for efficiency
+        # Process orders - use more orders for better coverage
+        for _, row in self.data_processor.order_data.iterrows():  # Removed 200 limit
             dest = row['Destination']
             node_idx = self.data_processor.city_to_idx.get(dest, -1)
             if node_idx < len(cities) and node_idx != -1:
-                demands[node_idx] += min(float(row['Weight']), 5.0)  # Keep in kg, limit max weight
+                weight = min(float(row['Weight']), 5.0)  # Keep in kg, limit max weight
+                demands[node_idx] += weight
+                total_demand += weight
                 order_to_node[row['Order_ID']] = node_idx
                 order_locations[row['Order_ID']] = (row['Source'], dest)
-
-        # Get vehicle capacities matching number of vehicles
-        vehicle_capacities = [
-            float(self.data_processor.truck_specifications[truck_type]['weight_capacity'])
-            for truck_type in truck_types
-        ]
-
-        # Ensure capacities length matches num_vehicles
-        if len(vehicle_capacities) != num_vehicles:
-            # Adjust capacities to match num_vehicles
-            if len(vehicle_capacities) > num_vehicles:
-                vehicle_capacities = vehicle_capacities[:num_vehicles]
-            else:
-                # Repeat last capacity if needed
-                last_capacity = vehicle_capacities[-1] if vehicle_capacities else 1000.0
-                vehicle_capacities.extend([last_capacity] * (num_vehicles - len(vehicle_capacities)))
+        
+        # Calculate required number of vehicles based on total demand and average truck capacity
+        avg_truck_capacity = sum(float(self.data_processor.truck_specifications[t]['weight_capacity']) 
+                               for t in truck_types) / len(truck_types)
+        num_vehicles = max(1, int(total_demand / avg_truck_capacity) + 1)  # Add 1 for safety margin
+        
+        # Ensure we don't exceed available truck types
+        num_vehicles = min(num_vehicles, len(truck_types))
+        
+        # Limit truck types to match num_vehicles first
+        truck_types = truck_types[:num_vehicles]
+        
+        # Get vehicle capacities - ensure we have exactly num_vehicles capacities
+        vehicle_capacities = []
+        for i in range(num_vehicles):
+            truck_type = truck_types[i]
+            capacity = float(self.data_processor.truck_specifications[truck_type]['weight_capacity'])
+            vehicle_capacities.append(capacity)
 
         return {
             'distance_matrix': distance_matrix,
-            'num_vehicles': num_vehicles,  # Use matched vehicle count
+            'num_vehicles': num_vehicles,
             'demands': demands,
             'order_to_node': order_to_node,
             'order_locations': order_locations,
@@ -257,20 +289,6 @@ class ORToolsMLOptimizer(BaseOptimizer):
         Returns:
             List of routes or None if no solution found
         """
-        # Ensure num_vehicles and vehicle_capacities are consistent
-        num_vehicles = data['num_vehicles']
-        vehicle_capacities = data['vehicle_capacities']
-        
-        # Double-check the consistency
-        if len(vehicle_capacities) != num_vehicles:
-            # Adjust capacities to match num_vehicles
-            if len(vehicle_capacities) > num_vehicles:
-                data['vehicle_capacities'] = vehicle_capacities[:num_vehicles]
-            else:
-                # Adjust num_vehicles to match capacities
-                data['num_vehicles'] = len(vehicle_capacities)
-                num_vehicles = len(vehicle_capacities)
-        
         # Create routing model
         manager = pywrapcp.RoutingIndexManager(
             len(data['cities']), 
@@ -283,45 +301,55 @@ class ORToolsMLOptimizer(BaseOptimizer):
         def distance_callback(from_index, to_index):
             from_node = manager.IndexToNode(from_index)
             to_node = manager.IndexToNode(to_index)
-            return int(data['distance_matrix'][from_node][to_node] * 100)  # Convert to integer
+            # Convert to integer and handle potential NaN values
+            distance = data['distance_matrix'][from_node][to_node]
+            if distance is None or distance != distance:  # Check for NaN
+                return 0
+            return int(distance * 100)  # Convert to integer
 
         transit_callback_index = routing.RegisterTransitCallback(distance_callback)
         routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
 
-        # Add distance dimension
+        # Add distance dimension with more generous limits
         routing.AddDimension(
             transit_callback_index,
             0,  # no slack
-            3000000,  # vehicle maximum travel distance
+            5000000,  # increased maximum travel distance
             True,  # start cumul to zero
             'Distance')
 
         # Define demand callback
         def demand_callback(from_index):
             from_node = manager.IndexToNode(from_index)
-            return int(data['demands'][from_node] * 100)  # Convert to integer (grams)
+            # Handle potential NaN values
+            demand = data['demands'][from_node]
+            if demand is None or demand != demand:  # Check for NaN
+                return 0
+            return int(demand * 100)  # Convert to integer (grams)
 
         demand_callback_index = routing.RegisterUnaryTransitCallback(demand_callback)
         
-        # Ensure vehicle capacities are properly formatted
-        capacity_array = [int(cap * 100) for cap in data['vehicle_capacities']]
-        
+        # Add capacity dimension with proper vehicle capacities
         routing.AddDimensionWithVehicleCapacity(
             demand_callback_index,
-            0,
-            capacity_array,
-            True,
+            0,  # no slack
+            [int(cap * 100) for cap in data['vehicle_capacities']],  # Convert all capacities to integer
+            True,  # start cumul to zero
             'Capacity')
 
-        # Set search parameters
+        # Set search parameters with more aggressive settings
         search_parameters = pywrapcp.DefaultRoutingSearchParameters()
         search_parameters.first_solution_strategy = strategy
         search_parameters.local_search_metaheuristic = (
             routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH)
         search_parameters.time_limit.seconds = time_limit
         
-        # Solve
+        # Add more aggressive search settings
+        search_parameters.log_search = True
+        
+        # Solve with parameters
         solution = routing.SolveWithParameters(search_parameters)
+        
         if solution:
             return self._convert_or_tools_solution(solution, manager, routing, data)
         return None
