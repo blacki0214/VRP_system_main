@@ -1,0 +1,8 @@
+numpy>=1.21.0
+pytest>=6.2.5
+matplotlib>=3.4.3
+typing-extensions>=4.0.0
+pyyaml>=6.0.1
+pandas>=2.0.0
+ortools==9.12.4544
+aiohttp>=3.9.1
