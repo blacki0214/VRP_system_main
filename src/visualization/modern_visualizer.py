@@ -514,10 +514,9 @@ class ModernVisualizer:
         # Plot cities with modern style and size based on parcel weight
         for i, (x, y, label) in enumerate(zip(cities_x[1:], cities_y[1:], city_labels[1:])):
             weight = float(label.split('\n')[1].strip('()kg'))
-            size = 100 + (weight * 10)  # Scale size based on parcel weight
             self.route_ax.scatter(x, y, 
                                 c='#27ae60',  # Green color for cities
-                                s=size, 
+                                s=100,  # Fixed size for all delivery points
                                 zorder=4,
                                 label='Delivery Points')
         

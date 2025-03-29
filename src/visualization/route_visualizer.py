@@ -181,15 +181,20 @@ class RouteVisualizer:
     def update_route_details(self, route: Route):
         """Update info panel with selected route details"""
         self.info_text.delete('1.0', tk.END)
-        info = f"Route Details: {route.vehicle_id}\n"
-        info += "=" * 50 + "\n"
-        info += f"Number of Parcels: {len(route.parcels)}\n"
-        info += f"Total Distance: {route.total_distance:.2f} km\n"
-        info += f"Total Cost: ${route.total_cost:.2f}\n"
-        info += f"Vehicle Capacity: {route.vehicle_capacity:.2f} kg\n"
-        info += f"Current Load: {route.get_total_weight():.2f} kg\n"
-        info += f"Capacity Utilization: {(route.get_total_weight()/route.vehicle_capacity)*100:.1f}%\n"
+        info = self._create_route_info_text(route)
         self.info_text.insert(tk.END, info)
+
+    def _create_route_info_text(self, route: Route) -> str:
+        """Create text for route information box"""
+        return (
+            "Best Route Details:\n"
+            f"Total Distance: {route.total_distance:.2f} km\n"
+            f"Total Cost: ${route.total_cost:.2f}\n"
+            f"Vehicle Load: {route.get_total_weight():.1f}/{route.vehicle_capacity:.1f} tons\n"
+            f"Number of Stops: {len(route.locations) - 2}\n"  # Subtract 2 for warehouse start/end
+            f"Efficiency: {(route.get_total_weight() / route.vehicle_capacity * 100):.1f}%\n"
+            f"Cost per km: ${route.total_cost / max(route.total_distance, 1):.2f}"
+        )
 
     def update_info(self, routes: List[Route]):
         """Update overall solution information"""

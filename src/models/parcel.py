@@ -9,4 +9,4 @@ class Parcel:
         self.weight = weight
 
     def __str__(self):
-        return f"Parcel {self.id} to {self.destination}, Weight: {self.weight} kg"
+        return f"Parcel {self.id} to {self.destination}, Weight: {self.weight} tons"

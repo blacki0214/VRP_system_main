@@ -114,7 +114,7 @@ def main():
     # Solve using specified method
     print(f"\nRunning optimization using method: {args.method}")
     try:
-        solution = solver.solve(method=args.method)
+        solution = solver.optimize(method=args.method)
         if solution:
             print(f"\nSolution found with {len(solution)} routes")
             for i, route in enumerate(solution):

@@ -43,7 +43,7 @@ class ORToolsMLOptimizer(BaseOptimizer):
         Returns:
             List[Route]: The best solution found
         """
-        print("\nStarting OR-Tools with ML optimization...")
+        print("\n=== Starting OR-Tools with ML optimization ===")
         start_time = time.time()
         
         # Ensure ML model is loaded
@@ -53,16 +53,32 @@ class ORToolsMLOptimizer(BaseOptimizer):
         or_solutions = self._generate_or_tools_solutions(num_variations=5)
         self._ortools_solutions = [route for solution in or_solutions for route in solution]
         
+        print(f"\nGenerated {len(or_solutions)} OR-Tools solutions")
+        print(f"Total routes across all solutions: {len(self._ortools_solutions)}")
+        
         # Use ML to enhance solutions
         enhanced_solutions = self._enhance_with_ml(self._ortools_solutions)
         
+        print(f"\nGenerated {len(enhanced_solutions)} enhanced solutions")
+        
         # Evaluate all solutions with detailed metrics
         all_solutions = []
-        for solution in enhanced_solutions:
+        for solution_idx, solution in enumerate(enhanced_solutions):
             if not solution:  # Skip empty solutions
+                print(f"\nSkipping empty solution {solution_idx+1}")
                 continue
                 
+            print(f"\nEvaluating solution {solution_idx+1}:")
             evaluation = self.evaluate_solution(solution)
+            
+            # Print raw metrics
+            print("\nRaw Metrics:")
+            print(f"- Total Distance: {evaluation['total_distance']:.2f} km")
+            print(f"- Total Cost: ${evaluation['total_cost']:.2f}")
+            print(f"- Parcels Delivered: {evaluation['parcels_delivered']}")
+            print(f"- Capacity Utilization: {evaluation['capacity_utilization']:.1%}")
+            print(f"- Route Efficiency: {evaluation['route_efficiency']:.2f}")
+            print(f"- Delivery Ratio: {evaluation['delivery_ratio']:.1%}")
             
             # Calculate normalized scores (0-1 range where 1 is better)
             distance_score = 1.0 / (1.0 + evaluation['total_distance'])  # Lower distance is better
@@ -70,6 +86,14 @@ class ORToolsMLOptimizer(BaseOptimizer):
             capacity_score = evaluation['capacity_utilization']  # Higher utilization is better
             delivery_score = evaluation['delivery_ratio']  # Higher delivery ratio is better
             efficiency_score = evaluation['route_efficiency'] / (1.0 + evaluation['route_efficiency'])  # Normalize efficiency
+            
+            # Print normalized scores
+            print("\nNormalized Scores (0-1):")
+            print(f"- Distance Score: {distance_score:.4f}")
+            print(f"- Cost Score: {cost_score:.4f}")
+            print(f"- Capacity Score: {capacity_score:.4f}")
+            print(f"- Delivery Score: {delivery_score:.4f}")
+            print(f"- Efficiency Score: {efficiency_score:.4f}")
             
             # Calculate weighted composite score
             composite_score = (
@@ -80,13 +104,7 @@ class ORToolsMLOptimizer(BaseOptimizer):
                 0.10 * efficiency_score     # 10% weight on route efficiency
             )
             
-            print(f"\nSolution Evaluation:")
-            print(f"- Distance Score: {distance_score:.4f} (from {evaluation['total_distance']:.1f} km)")
-            print(f"- Cost Score: {cost_score:.4f} (from ${evaluation['total_cost']:.2f})")
-            print(f"- Capacity Score: {capacity_score:.4f} ({evaluation['capacity_utilization']:.1%} utilization)")
-            print(f"- Delivery Score: {delivery_score:.4f} ({evaluation['parcels_delivered']} parcels)")
-            print(f"- Efficiency Score: {efficiency_score:.4f} ({evaluation['route_efficiency']:.2f} parcels*weight/km)")
-            print(f"- Composite Score: {composite_score:.4f}")
+            print(f"\nComposite Score: {composite_score:.4f}")
             
             all_solutions.append((solution, composite_score))
         
@@ -166,8 +184,17 @@ class ORToolsMLOptimizer(BaseOptimizer):
         Returns:
             List of solutions, where each solution is a list of routes
         """
-        print("Generating OR-Tools solutions...")
+        print("\n=== Generating OR-Tools Solutions ===")
         solutions = []
+        
+        # Get initial data model to determine available truck types
+        initial_data = self._create_data_model()
+        print(f"Initial data - Total demand: {sum(initial_data['demands'])} tons")
+        print(f"Vehicle capacities: {initial_data['vehicle_capacities']} tons")
+        print(f"Number of vehicles: {initial_data['num_vehicles']}")
+        
+        # Calculate base number of vehicles from initial data
+        base_vehicles = initial_data['num_vehicles']
         
         # Vary parameters to get different solutions
         time_limits = [30, 60, 90]  # Increased time limits
@@ -181,9 +208,6 @@ class ORToolsMLOptimizer(BaseOptimizer):
         # Get initial data model to determine available truck types
         initial_data = self._create_data_model()
         max_vehicles = len(initial_data['truck_types'])
-        
-        # Calculate base number of vehicles from initial data
-        base_vehicles = initial_data['num_vehicles']
         
         for i in range(num_variations):
             print(f"Generating solution variation {i+1}/{num_variations}")
@@ -250,18 +274,17 @@ class ORToolsMLOptimizer(BaseOptimizer):
         
         # Initialize data structures
         total_demand = 0
-        demands = [0] * len(cities)  # Initialize with zeros
+        demands = [0] * len(cities)
         order_to_node = {}
         order_locations = {}
         
-        print("Processing orders for solver...")  # Debug print
-        
-        # Process orders - weights are already in tons from DataProcessor
+        # Process orders - use more orders for better coverage
         for _, row in self.data_processor.order_data.iterrows():
             dest = row['Destination']
             node_idx = self.data_processor.city_to_idx.get(dest, -1)
             if node_idx < len(cities) and node_idx != -1:
-                weight = float(row['Weight'])  # Weight is already in tons
+                # Weight is already in tons, keep it in tons for calculation
+                weight = float(row['Weight'])
                 demands[node_idx] += weight
                 total_demand += weight
                 order_to_node[row['Order_ID']] = node_idx
@@ -269,55 +292,34 @@ class ORToolsMLOptimizer(BaseOptimizer):
         
         print(f"Total demand: {total_demand} tons")  # Debug print
         
-        # Get available truck types and their capacities (already in tons)
+        # Get available truck types and their capacities in tons
         truck_types = sorted(list(self.data_processor.truck_specifications.keys()),
                            key=lambda t: self.data_processor.truck_specifications[t]['weight_capacity'])
         
-        # Calculate required vehicles based on total demand and largest truck capacity
-        max_truck_capacity = max(self.data_processor.truck_specifications[t]['weight_capacity'] 
-                               for t in truck_types)
-        min_vehicles_needed = max(1, int(total_demand / max_truck_capacity) + 1)
+        # Calculate average truck capacity in tons
+        truck_capacities = [float(self.data_processor.truck_specifications[t]['weight_capacity']) 
+                          for t in truck_types]
+        avg_truck_capacity = sum(truck_capacities) / len(truck_capacities)
+        print(f"Average truck capacity: {avg_truck_capacity} tons")  # Debug print
         
-        # Set number of vehicles with a reasonable upper limit
-        num_vehicles = min(20, min_vehicles_needed)
-        print(f"Minimum vehicles needed: {min_vehicles_needed}, Using: {num_vehicles}")
+        # Calculate required vehicles with a reasonable limit
+        num_vehicles = min(20, max(1, int(total_demand / avg_truck_capacity) + 1))
+        print(f"Calculated number of vehicles: {num_vehicles}")  # Debug print
         
-        # Select appropriate truck types based on demand distribution
-        selected_truck_types = []
-        remaining_demand = total_demand
-        for _ in range(num_vehicles):
-            # Choose truck type based on remaining demand
-            for truck_type in reversed(truck_types):  # Start with largest trucks
-                capacity = self.data_processor.truck_specifications[truck_type]['weight_capacity']
-                if capacity <= remaining_demand * 1.5:  # Allow some flexibility
-                    selected_truck_types.append(truck_type)
-                    remaining_demand -= capacity
-                    break
-            if not selected_truck_types or len(selected_truck_types) < num_vehicles:
-                selected_truck_types.append(truck_types[0])  # Add smallest truck if needed
+        # Ensure we don't exceed available truck types
+        num_vehicles = min(num_vehicles, len(truck_types))
         
-        # Get vehicle capacities for selected trucks (in tons)
+        # Limit truck types to match num_vehicles and ensure they're sorted by capacity
+        truck_types = truck_types[:num_vehicles]
+        
+        # Get vehicle capacities in tons
         vehicle_capacities = [float(self.data_processor.truck_specifications[t]['weight_capacity']) 
-                            for t in selected_truck_types[:num_vehicles]]
-        
-        # Ensure we have enough capacity
-        total_capacity = sum(vehicle_capacities)
-        if total_capacity < total_demand:
-            print(f"Warning: Total capacity ({total_capacity} tons) is less than total demand ({total_demand} tons)")
-            # Add more vehicles if needed
-            while total_capacity < total_demand and len(vehicle_capacities) < 20:
-                new_truck = max(truck_types, key=lambda t: self.data_processor.truck_specifications[t]['weight_capacity'])
-                vehicle_capacities.append(float(self.data_processor.truck_specifications[new_truck]['weight_capacity']))
-                selected_truck_types.append(new_truck)
-                total_capacity = sum(vehicle_capacities)
-                num_vehicles = len(vehicle_capacities)
-        
-        print(f"Final configuration:")
-        print(f"- Number of vehicles: {num_vehicles}")
-        print(f"- Total capacity: {total_capacity} tons")
-        print(f"- Total demand: {total_demand} tons")
-        print(f"- Capacity/Demand ratio: {total_capacity/total_demand if total_demand > 0 else 'inf'}")
-        
+                            for t in truck_types]
+
+        # Double check that lengths match
+        assert len(vehicle_capacities) == num_vehicles, f"Mismatch: {len(vehicle_capacities)} capacities for {num_vehicles} vehicles"
+        assert len(truck_types) == num_vehicles, f"Mismatch: {len(truck_types)} truck types for {num_vehicles} vehicles"
+
         return {
             'distance_matrix': distance_matrix,
             'num_vehicles': num_vehicles,
@@ -327,7 +329,7 @@ class ORToolsMLOptimizer(BaseOptimizer):
             'cities': cities,
             'depot': 0,
             'vehicle_capacities': vehicle_capacities,
-            'truck_types': selected_truck_types[:num_vehicles]
+            'truck_types': truck_types
         }
     
     def _solve_or_tools(self, data, strategy, time_limit: int) -> Optional[List[Route]]:
@@ -342,8 +344,6 @@ class ORToolsMLOptimizer(BaseOptimizer):
         Returns:
             List of routes or None if no solution found
         """
-        print("\nStarting OR-Tools solver...")
-        
         # Create routing model
         manager = pywrapcp.RoutingIndexManager(
             len(data['cities']), 
@@ -360,76 +360,61 @@ class ORToolsMLOptimizer(BaseOptimizer):
             distance = data['distance_matrix'][from_node][to_node]
             if distance is None or distance != distance:  # Check for NaN
                 return 0
-            return int(distance * 100)  # Convert to integer (preserve 2 decimal places)
+            return int(distance * 100)  # Convert to integer
 
         transit_callback_index = routing.RegisterTransitCallback(distance_callback)
         routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
 
         # Add distance dimension with more generous limits
-        dimension_name = 'Distance'
         routing.AddDimension(
             transit_callback_index,
-            0,    # no slack
-            1000000,  # very large vehicle maximum travel distance
+            0,  # no slack
+            5000000,  # increased maximum travel distance
             True,  # start cumul to zero
-            dimension_name)
-        distance_dimension = routing.GetDimensionOrDie(dimension_name)
-        
-        # Define demand callback (weights are in tons)
+            'Distance')
+
+        # Define demand callback
         def demand_callback(from_index):
             from_node = manager.IndexToNode(from_index)
             # Handle potential NaN values
             demand = data['demands'][from_node]
             if demand is None or demand != demand:  # Check for NaN
                 return 0
-            # Convert tons to integer (multiply by 1000 to preserve 3 decimal places)
-            return int(demand * 1000)
+            # Convert tons to integer (multiply by 100 to preserve 2 decimal places)
+            return int(demand * 100)
 
         demand_callback_index = routing.RegisterUnaryTransitCallback(demand_callback)
         
         # Add capacity dimension with proper vehicle capacities
         routing.AddDimensionWithVehicleCapacity(
             demand_callback_index,
-            0,    # no slack
-            # Convert tons to integer (multiply by 1000 to preserve 3 decimal places)
-            [int(cap * 1000) for cap in data['vehicle_capacities']],
+            0,  # no slack
+            [int(cap * 100) for cap in data['vehicle_capacities']],  # Convert tons to integer (2 decimal places)
             True,  # start cumul to zero
             'Capacity')
-        
-        # Set first solution strategy
+
+        # Set search parameters with more aggressive settings
         search_parameters = pywrapcp.DefaultRoutingSearchParameters()
         search_parameters.first_solution_strategy = strategy
-        
-        # Use Guided Local Search
         search_parameters.local_search_metaheuristic = (
             routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH)
         
-        # Set time limits
-        search_parameters.time_limit.seconds = time_limit
-        search_parameters.solution_limit = 100
+        # Set strict time limit and solution limits
+        search_parameters.time_limit.seconds = 30  # Maximum 30 seconds
+        search_parameters.solution_limit = 100     # Stop after 100 solutions
+        search_parameters.log_search = True
         
-        # Enable full propagation
-        search_parameters.use_full_propagation = True
+        # Add early termination criteria
+        search_parameters.lns_time_limit.seconds = 10    # Limit for Large Neighborhood Search
+        search_parameters.use_full_propagation = True    # More aggressive propagation
+        search_parameters.guided_local_search_lambda_coefficient = 0.1  # GLS diversification
         
-        # Set other parameters to help find feasible solutions
-        search_parameters.guided_local_search_lambda_coefficient = 0.1
-        search_parameters.use_depth_first_search = True
-        search_parameters.use_cp = True
-        search_parameters.use_cp_sat = True
-        
-        print(f"Solving with {data['num_vehicles']} vehicles...")
-        print(f"Total demand: {sum(data['demands'])} tons")
-        print(f"Total capacity: {sum(data['vehicle_capacities'])} tons")
-        
-        # Solve and get solution
+        # Solve with parameters
         solution = routing.SolveWithParameters(search_parameters)
         
         if solution:
-            print("Found feasible solution!")
             return self._convert_or_tools_solution(solution, manager, routing, data)
-        else:
-            print("No feasible solution found with current parameters")
-            return None
+        return None
     
     def _convert_or_tools_solution(self, solution, manager, routing, data) -> List[Route]:
         """
@@ -518,7 +503,8 @@ class ORToolsMLOptimizer(BaseOptimizer):
         Returns:
             List of enhanced solutions
         """
-        print("Enhancing solutions with ML...")
+        print("\n=== Enhancing Solutions with ML ===")
+        print(f"Number of initial routes: {len(routes)}")
         
         # Create 3 different enhanced solutions
         enhanced_solutions = []
@@ -527,6 +513,16 @@ class ORToolsMLOptimizer(BaseOptimizer):
         if not routes:
             print("Warning: No routes to enhance with ML")
             return [[]]  # Return array with one empty solution
+        
+        # Print route details for debugging
+        for i, route in enumerate(routes):
+            print(f"\nRoute {i+1}:")
+            print(f"- Vehicle: {route.vehicle_id}")
+            print(f"- Parcels: {len(route.parcels)}")
+            print(f"- Total weight: {route.get_total_weight():.2f} kg")
+            print(f"- Vehicle capacity: {route.vehicle_capacity:.2f} kg")
+            print(f"- Total distance: {route.total_distance:.2f} km")
+            print(f"- Total cost: ${route.total_cost:.2f}")
         
         # Group routes by similar characteristics for solution formation
         route_groups = self._group_routes(routes)

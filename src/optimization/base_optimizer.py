@@ -162,11 +162,8 @@ class BaseOptimizer(ABC):
         Returns:
             Dictionary containing various scoring metrics and final composite score
         """
-        # Validate routes first
-        feasible_routes = [route for route in routes if route.validate()]
-        
-        if not feasible_routes:
-            print("Warning: No feasible routes found for scoring")
+        if not routes:
+            print("Warning: No routes found for scoring")
             return {
                 'distance_score': 0.0,
                 'cost_efficiency_score': 0.0,
@@ -177,35 +174,37 @@ class BaseOptimizer(ABC):
             }
 
         # 1. Distance Score (lower is better)
-        total_distance = sum(route.total_distance for route in feasible_routes)
-        total_parcels = sum(len(route.parcels) for route in feasible_routes)
+        total_distance = sum(route.total_distance for route in routes)
+        total_parcels = sum(len(route.parcels) for route in routes)
         avg_distance_per_parcel = total_distance / total_parcels if total_parcels > 0 else float('inf')
-        distance_score = max(0, 1 - (avg_distance_per_parcel / 2000))  # Normalize to 0-1 with 2000km as max
+        # Use logarithmic scaling for large distances
+        distance_score = max(0, 1 - (avg_distance_per_parcel / (total_parcels * 100)))
 
         # 2. Cost Efficiency Score
-        total_cost = sum(route.total_cost for route in feasible_routes)
+        total_cost = sum(route.total_cost for route in routes)
         cost_per_parcel = total_cost / total_parcels if total_parcels > 0 else float('inf')
-        cost_efficiency_score = max(0, 1 - (cost_per_parcel / 5000))  # Normalize to 0-1 with $5000 as max
+        # Use logarithmic scaling for large costs
+        cost_efficiency_score = max(0, 1 - (cost_per_parcel / (total_distance * 2.5)))
 
         # 3. Capacity Utilization Score
         utilization_scores = []
-        for route in feasible_routes:
+        for route in routes:
             capacity = route.vehicle_capacity
             if capacity > 0:
                 utilization = route.get_total_weight() / capacity
                 # Penalize both under and over-utilization
-                utilization_score = 1 - abs(0.85 - utilization)  # 85% utilization is ideal
+                utilization_score = 1 - abs(0.85 - min(utilization, 1.0))  # 85% utilization is ideal, cap at 100%
                 utilization_scores.append(utilization_score)
         capacity_utilization_score = sum(utilization_scores) / len(utilization_scores) if utilization_scores else 0
 
         # 4. Parcel Efficiency Score
-        avg_parcels_per_route = total_parcels / len(feasible_routes)
+        avg_parcels_per_route = total_parcels / len(routes)
         # Assume 5 parcels per route is minimum efficient, 15 is optimal
         parcel_efficiency_score = min(1.0, avg_parcels_per_route / 15)
 
         # 5. Route Structure Score
         structure_scores = []
-        for route in feasible_routes:
+        for route in routes:
             if len(route.locations) > 2:  # More than just depot-return
                 # Calculate average distance between consecutive stops
                 consecutive_distances = []
@@ -241,11 +240,11 @@ class BaseOptimizer(ABC):
         )
 
         # Print debug information
-        print(f"\nScoring Summary for {len(feasible_routes)} feasible routes out of {len(routes)} total routes:")
-        print(f"Distance Score: {distance_score:.4f}")
-        print(f"Cost Efficiency Score: {cost_efficiency_score:.4f}")
+        print(f"\nScoring Summary for {len(routes)} routes:")
+        print(f"Distance Score: {distance_score:.4f} (avg {avg_distance_per_parcel:.1f} km/parcel)")
+        print(f"Cost Efficiency Score: {cost_efficiency_score:.4f} (${cost_per_parcel:.2f}/parcel)")
         print(f"Capacity Utilization Score: {capacity_utilization_score:.4f}")
-        print(f"Parcel Efficiency Score: {parcel_efficiency_score:.4f}")
+        print(f"Parcel Efficiency Score: {parcel_efficiency_score:.4f} ({avg_parcels_per_route:.1f} parcels/route)")
         print(f"Route Structure Score: {route_structure_score:.4f}")
         print(f"Composite Score: {composite_score:.4f}")
 
