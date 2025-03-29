@@ -14,9 +14,9 @@ class DataProcessor:
         self.cities: set = {"WAREHOUSE"}  # Initialize with warehouse
         self.city_to_idx: Dict[str, int] = {}
         self.truck_specifications: Dict[str, Dict] = {
-            '9.6': {'weight_capacity': 2.0, 'cost_per_km': 1, 'speed': 40},  # 2 tons
-            '12.5': {'weight_capacity': 5.0, 'cost_per_km': 2, 'speed': 40}, # 5 tons
-            '16.5': {'weight_capacity': 10.0, 'cost_per_km': 3, 'speed': 40}  # 10 tons
+            '9.6': {'weight_capacity': 20.0, 'cost_per_km': 1, 'speed': 40},  # 20 tons
+            '12.5': {'weight_capacity': 50.0, 'cost_per_km': 2, 'speed': 40}, # 50 tons
+            '16.5': {'weight_capacity': 100.0, 'cost_per_km': 3, 'speed': 40}  # 100 tons
         }
         self.warehouse_location = "WAREHOUSE"
         self.warehouse_lat = 0.0

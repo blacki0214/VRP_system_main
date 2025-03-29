@@ -56,44 +56,62 @@ class ORToolsMLOptimizer(BaseOptimizer):
         # Use ML to enhance solutions
         enhanced_solutions = self._enhance_with_ml(self._ortools_solutions)
         
-        # Evaluate all solutions based on total cost and parcels delivered
+        # Evaluate all solutions with detailed metrics
         all_solutions = []
-        for i, solution in enumerate(enhanced_solutions):
-            evaluation = self.evaluate_solution(solution)
-            cost_metric = evaluation['total_cost']
-            parcels_metric = evaluation['parcels_delivered']
-            
-            # We want to minimize cost and maximize parcels
-            # Higher score is better (OR-Tools doesn't use fitness scores internally)
-            if parcels_metric > 0:
-                score = parcels_metric / (cost_metric + 1)  # Add 1 to avoid division by zero
-            else:
-                score = 0
+        for solution in enhanced_solutions:
+            if not solution:  # Skip empty solutions
+                continue
                 
-            all_solutions.append((solution, score))
+            evaluation = self.evaluate_solution(solution)
+            
+            # Calculate normalized scores (0-1 range where 1 is better)
+            distance_score = 1.0 / (1.0 + evaluation['total_distance'])  # Lower distance is better
+            cost_score = 1.0 / (1.0 + evaluation['total_cost'])  # Lower cost is better
+            capacity_score = evaluation['capacity_utilization']  # Higher utilization is better
+            delivery_score = evaluation['delivery_ratio']  # Higher delivery ratio is better
+            efficiency_score = evaluation['route_efficiency'] / (1.0 + evaluation['route_efficiency'])  # Normalize efficiency
+            
+            # Calculate weighted composite score
+            composite_score = (
+                0.25 * distance_score +     # 25% weight on distance
+                0.25 * cost_score +         # 25% weight on cost
+                0.20 * capacity_score +     # 20% weight on capacity utilization
+                0.20 * delivery_score +     # 20% weight on delivery ratio
+                0.10 * efficiency_score     # 10% weight on route efficiency
+            )
+            
+            print(f"\nSolution Evaluation:")
+            print(f"- Distance Score: {distance_score:.4f} (from {evaluation['total_distance']:.1f} km)")
+            print(f"- Cost Score: {cost_score:.4f} (from ${evaluation['total_cost']:.2f})")
+            print(f"- Capacity Score: {capacity_score:.4f} ({evaluation['capacity_utilization']:.1%} utilization)")
+            print(f"- Delivery Score: {delivery_score:.4f} ({evaluation['parcels_delivered']} parcels)")
+            print(f"- Efficiency Score: {efficiency_score:.4f} ({evaluation['route_efficiency']:.2f} parcels*weight/km)")
+            print(f"- Composite Score: {composite_score:.4f}")
+            
+            all_solutions.append((solution, composite_score))
         
         # Select best solution
         if all_solutions:
-            all_solutions.sort(key=lambda x: x[1], reverse=True)
+            all_solutions.sort(key=lambda x: x[1], reverse=True)  # Sort by composite score
             self.best_solution = all_solutions[0][0]
             best_score = all_solutions[0][1]
+            
+            # Print detailed evaluation of best solution
+            best_eval = self.evaluate_solution(self.best_solution)
+            print(f"\nBest Solution Details:")
+            print(f"- Total Distance: {best_eval['total_distance']:.2f} km")
+            print(f"- Total Cost: ${best_eval['total_cost']:.2f}")
+            print(f"- Parcels Delivered: {best_eval['parcels_delivered']} ({best_eval['delivery_ratio']:.1%} of total)")
+            print(f"- Capacity Utilization: {best_eval['capacity_utilization']:.1%}")
+            print(f"- Route Efficiency: {best_eval['route_efficiency']:.2f} parcels*weight/km")
+            print(f"- Composite Score: {best_score:.4f}")
         else:
-            # Handle case when no solutions are found
-            print("Warning: No solutions found by OR-Tools with ML optimization")
+            print("\nWarning: No valid solutions found")
             self.best_solution = []
             best_score = 0.0
         
         elapsed_time = time.time() - start_time
-        
-        if self.best_solution:
-            evaluation = self.evaluate_solution(self.best_solution)
-            print(f"\nOR-Tools with ML optimization completed in {elapsed_time:.2f} seconds.")
-            print(f"Best solution score: {best_score:.4f}")
-            print(f"Parcels delivered: {evaluation['parcels_delivered']}")
-            print(f"Total cost: ${evaluation['total_cost']:.2f}")
-        else:
-            print(f"\nOR-Tools with ML optimization failed to find a solution.")
-            print(f"Execution time: {elapsed_time:.2f} seconds.")
+        print(f"\nOptimization completed in {elapsed_time:.2f} seconds")
         
         return self.best_solution
     
@@ -124,7 +142,6 @@ class ORToolsMLOptimizer(BaseOptimizer):
                             'total_weight': route.get_total_weight(),
                             'total_distance': route.total_distance,
                             'vehicle_capacity': route.vehicle_capacity,
-                            'total_cost': route.total_cost,
                             'truck_type': route.vehicle_id.split('_')[1]
                         }
                         training_data.append(route_data)
@@ -175,9 +192,6 @@ class ORToolsMLOptimizer(BaseOptimizer):
             time_limit = random.choice(time_limits)
             strategy = random.choice(strategies)
             
-            # Create data model with slight variations
-            data = self._create_data_model()
-            
             # Try different vehicle counts around the base number
             vehicle_counts = [
                 base_vehicles,  # Try base number
@@ -189,13 +203,20 @@ class ORToolsMLOptimizer(BaseOptimizer):
             
             # Try each vehicle count until we find a solution
             for new_num_vehicles in vehicle_counts:
+                # Create data model with slight variations
+                data = self._create_data_model()
+                
                 # Update truck types and capacities to match new vehicle count
                 data['num_vehicles'] = new_num_vehicles
                 data['truck_types'] = data['truck_types'][:new_num_vehicles]
                 data['vehicle_capacities'] = [
-                    float(self.data_processor.truck_specifications[t]['weight_capacity'])
+                    float(self.data_processor.truck_specifications[t]['weight_capacity'] * 1000)
                     for t in data['truck_types']
                 ]
+                
+                # Verify the lengths match before solving
+                if len(data['vehicle_capacities']) != data['num_vehicles']:
+                    continue
                 
                 # Solve with these parameters
                 solution = self._solve_or_tools(data, strategy, time_limit)
@@ -227,44 +248,76 @@ class ORToolsMLOptimizer(BaseOptimizer):
         else:
             distance_matrix = self.data_processor.distance_matrix
         
-        # Get available truck types
-        truck_types = list(self.data_processor.truck_specifications.keys())
-        
-        # Calculate number of vehicles based on total demand and truck capacities
+        # Initialize data structures
         total_demand = 0
-        demands = [0] * len(cities)
+        demands = [0] * len(cities)  # Initialize with zeros
         order_to_node = {}
         order_locations = {}
         
-        # Process orders - use more orders for better coverage
-        for _, row in self.data_processor.order_data.iterrows():  # Removed 200 limit
+        print("Processing orders for solver...")  # Debug print
+        
+        # Process orders - weights are already in tons from DataProcessor
+        for _, row in self.data_processor.order_data.iterrows():
             dest = row['Destination']
             node_idx = self.data_processor.city_to_idx.get(dest, -1)
             if node_idx < len(cities) and node_idx != -1:
-                weight = min(float(row['Weight']), 5.0)  # Keep in kg, limit max weight
+                weight = float(row['Weight'])  # Weight is already in tons
                 demands[node_idx] += weight
                 total_demand += weight
                 order_to_node[row['Order_ID']] = node_idx
                 order_locations[row['Order_ID']] = (row['Source'], dest)
         
-        # Calculate required number of vehicles based on total demand and average truck capacity
-        avg_truck_capacity = sum(float(self.data_processor.truck_specifications[t]['weight_capacity']) 
-                               for t in truck_types) / len(truck_types)
-        num_vehicles = max(1, int(total_demand / avg_truck_capacity) + 1)  # Add 1 for safety margin
+        print(f"Total demand: {total_demand} tons")  # Debug print
         
-        # Ensure we don't exceed available truck types
-        num_vehicles = min(num_vehicles, len(truck_types))
+        # Get available truck types and their capacities (already in tons)
+        truck_types = sorted(list(self.data_processor.truck_specifications.keys()),
+                           key=lambda t: self.data_processor.truck_specifications[t]['weight_capacity'])
         
-        # Limit truck types to match num_vehicles first
-        truck_types = truck_types[:num_vehicles]
+        # Calculate required vehicles based on total demand and largest truck capacity
+        max_truck_capacity = max(self.data_processor.truck_specifications[t]['weight_capacity'] 
+                               for t in truck_types)
+        min_vehicles_needed = max(1, int(total_demand / max_truck_capacity) + 1)
         
-        # Get vehicle capacities - ensure we have exactly num_vehicles capacities
-        vehicle_capacities = []
-        for i in range(num_vehicles):
-            truck_type = truck_types[i]
-            capacity = float(self.data_processor.truck_specifications[truck_type]['weight_capacity'])
-            vehicle_capacities.append(capacity)
-
+        # Set number of vehicles with a reasonable upper limit
+        num_vehicles = min(20, min_vehicles_needed)
+        print(f"Minimum vehicles needed: {min_vehicles_needed}, Using: {num_vehicles}")
+        
+        # Select appropriate truck types based on demand distribution
+        selected_truck_types = []
+        remaining_demand = total_demand
+        for _ in range(num_vehicles):
+            # Choose truck type based on remaining demand
+            for truck_type in reversed(truck_types):  # Start with largest trucks
+                capacity = self.data_processor.truck_specifications[truck_type]['weight_capacity']
+                if capacity <= remaining_demand * 1.5:  # Allow some flexibility
+                    selected_truck_types.append(truck_type)
+                    remaining_demand -= capacity
+                    break
+            if not selected_truck_types or len(selected_truck_types) < num_vehicles:
+                selected_truck_types.append(truck_types[0])  # Add smallest truck if needed
+        
+        # Get vehicle capacities for selected trucks (in tons)
+        vehicle_capacities = [float(self.data_processor.truck_specifications[t]['weight_capacity']) 
+                            for t in selected_truck_types[:num_vehicles]]
+        
+        # Ensure we have enough capacity
+        total_capacity = sum(vehicle_capacities)
+        if total_capacity < total_demand:
+            print(f"Warning: Total capacity ({total_capacity} tons) is less than total demand ({total_demand} tons)")
+            # Add more vehicles if needed
+            while total_capacity < total_demand and len(vehicle_capacities) < 20:
+                new_truck = max(truck_types, key=lambda t: self.data_processor.truck_specifications[t]['weight_capacity'])
+                vehicle_capacities.append(float(self.data_processor.truck_specifications[new_truck]['weight_capacity']))
+                selected_truck_types.append(new_truck)
+                total_capacity = sum(vehicle_capacities)
+                num_vehicles = len(vehicle_capacities)
+        
+        print(f"Final configuration:")
+        print(f"- Number of vehicles: {num_vehicles}")
+        print(f"- Total capacity: {total_capacity} tons")
+        print(f"- Total demand: {total_demand} tons")
+        print(f"- Capacity/Demand ratio: {total_capacity/total_demand if total_demand > 0 else 'inf'}")
+        
         return {
             'distance_matrix': distance_matrix,
             'num_vehicles': num_vehicles,
@@ -274,7 +327,7 @@ class ORToolsMLOptimizer(BaseOptimizer):
             'cities': cities,
             'depot': 0,
             'vehicle_capacities': vehicle_capacities,
-            'truck_types': truck_types
+            'truck_types': selected_truck_types[:num_vehicles]
         }
     
     def _solve_or_tools(self, data, strategy, time_limit: int) -> Optional[List[Route]]:
@@ -289,6 +342,8 @@ class ORToolsMLOptimizer(BaseOptimizer):
         Returns:
             List of routes or None if no solution found
         """
+        print("\nStarting OR-Tools solver...")
+        
         # Create routing model
         manager = pywrapcp.RoutingIndexManager(
             len(data['cities']), 
@@ -305,54 +360,76 @@ class ORToolsMLOptimizer(BaseOptimizer):
             distance = data['distance_matrix'][from_node][to_node]
             if distance is None or distance != distance:  # Check for NaN
                 return 0
-            return int(distance * 100)  # Convert to integer
+            return int(distance * 100)  # Convert to integer (preserve 2 decimal places)
 
         transit_callback_index = routing.RegisterTransitCallback(distance_callback)
         routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
 
         # Add distance dimension with more generous limits
+        dimension_name = 'Distance'
         routing.AddDimension(
             transit_callback_index,
-            0,  # no slack
-            5000000,  # increased maximum travel distance
+            0,    # no slack
+            1000000,  # very large vehicle maximum travel distance
             True,  # start cumul to zero
-            'Distance')
-
-        # Define demand callback
+            dimension_name)
+        distance_dimension = routing.GetDimensionOrDie(dimension_name)
+        
+        # Define demand callback (weights are in tons)
         def demand_callback(from_index):
             from_node = manager.IndexToNode(from_index)
             # Handle potential NaN values
             demand = data['demands'][from_node]
             if demand is None or demand != demand:  # Check for NaN
                 return 0
-            return int(demand * 100)  # Convert to integer (grams)
+            # Convert tons to integer (multiply by 1000 to preserve 3 decimal places)
+            return int(demand * 1000)
 
         demand_callback_index = routing.RegisterUnaryTransitCallback(demand_callback)
         
         # Add capacity dimension with proper vehicle capacities
         routing.AddDimensionWithVehicleCapacity(
             demand_callback_index,
-            0,  # no slack
-            [int(cap * 100) for cap in data['vehicle_capacities']],  # Convert all capacities to integer
+            0,    # no slack
+            # Convert tons to integer (multiply by 1000 to preserve 3 decimal places)
+            [int(cap * 1000) for cap in data['vehicle_capacities']],
             True,  # start cumul to zero
             'Capacity')
-
-        # Set search parameters with more aggressive settings
+        
+        # Set first solution strategy
         search_parameters = pywrapcp.DefaultRoutingSearchParameters()
         search_parameters.first_solution_strategy = strategy
+        
+        # Use Guided Local Search
         search_parameters.local_search_metaheuristic = (
             routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH)
+        
+        # Set time limits
         search_parameters.time_limit.seconds = time_limit
+        search_parameters.solution_limit = 100
         
-        # Add more aggressive search settings
-        search_parameters.log_search = True
+        # Enable full propagation
+        search_parameters.use_full_propagation = True
         
-        # Solve with parameters
+        # Set other parameters to help find feasible solutions
+        search_parameters.guided_local_search_lambda_coefficient = 0.1
+        search_parameters.use_depth_first_search = True
+        search_parameters.use_cp = True
+        search_parameters.use_cp_sat = True
+        
+        print(f"Solving with {data['num_vehicles']} vehicles...")
+        print(f"Total demand: {sum(data['demands'])} tons")
+        print(f"Total capacity: {sum(data['vehicle_capacities'])} tons")
+        
+        # Solve and get solution
         solution = routing.SolveWithParameters(search_parameters)
         
         if solution:
+            print("Found feasible solution!")
             return self._convert_or_tools_solution(solution, manager, routing, data)
-        return None
+        else:
+            print("No feasible solution found with current parameters")
+            return None
     
     def _convert_or_tools_solution(self, solution, manager, routing, data) -> List[Route]:
         """
@@ -383,7 +460,7 @@ class ORToolsMLOptimizer(BaseOptimizer):
                 locations=[self.warehouse_location], 
                 parcels=[],
                 data_processor=self.data_processor,
-                vehicle_capacity=self.data_processor.truck_specifications[truck_type]['weight_capacity']
+                vehicle_capacity=self.data_processor.truck_specifications[truck_type]['weight_capacity'] * 1000  # Convert tons to kg
             )
             
             # Add locations and parcels
@@ -405,7 +482,8 @@ class ORToolsMLOptimizer(BaseOptimizer):
                         if not any(order_mask):
                             continue
                             
-                        weight = self.data_processor.order_data[order_mask]['Weight'].values[0]
+                        # Convert weight from tons to kg
+                        weight = float(self.data_processor.order_data[order_mask]['Weight'].values[0]) * 1000
                         int_order_id = self.data_processor.get_order_id_int(order_id)
                         
                         # Add parcel
@@ -846,3 +924,53 @@ class ORToolsMLOptimizer(BaseOptimizer):
                 lon=float(idx)   # Use index as coordinate for visualization
             )
         return self._location_cache[city_name]
+
+    def evaluate_solution(self, solution: List[Route]) -> Dict:
+        """
+        Evaluate a solution with detailed metrics.
+        
+        Args:
+            solution: List of routes to evaluate
+            
+        Returns:
+            Dictionary with evaluation metrics
+        """
+        if not solution:
+            return {
+                'total_distance': float('inf'),
+                'total_cost': float('inf'),
+                'parcels_delivered': 0,
+                'capacity_utilization': 0.0,
+                'route_efficiency': 0.0
+            }
+
+        # Calculate basic metrics
+        total_distance = sum(route.total_distance for route in solution)
+        total_cost = sum(route.total_cost for route in solution)
+        total_parcels = sum(len(route.parcels) for route in solution)
+        
+        # Calculate capacity utilization
+        utilization_scores = []
+        for route in solution:
+            if route.vehicle_capacity > 0:
+                utilization = route.get_total_weight() / route.vehicle_capacity
+                utilization_scores.append(utilization)
+        avg_utilization = sum(utilization_scores) / len(utilization_scores) if utilization_scores else 0.0
+        
+        # Calculate route efficiency (parcels per km)
+        total_parcels_weighted = sum(len(route.parcels) * route.get_total_weight() 
+                                   for route in solution)
+        route_efficiency = total_parcels_weighted / total_distance if total_distance > 0 else 0.0
+        
+        # Calculate percentage of total orders delivered
+        total_orders = len(self.data_processor.order_data)
+        delivery_ratio = total_parcels / total_orders if total_orders > 0 else 0.0
+        
+        return {
+            'total_distance': total_distance,
+            'total_cost': total_cost,
+            'parcels_delivered': total_parcels,
+            'capacity_utilization': avg_utilization,
+            'route_efficiency': route_efficiency,
+            'delivery_ratio': delivery_ratio
+        }

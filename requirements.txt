@@ -6,3 +6,8 @@ pyyaml>=6.0.1
 pandas>=2.0.0
 ortools==9.12.4544
 aiohttp>=3.9.1
+setuptools>=65.5.0
+joblib>=1.3.2
+tkinter>=8.6.11
+folium>=0.14.0
+scikit-learn>=1.3.2
