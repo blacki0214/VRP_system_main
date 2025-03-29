@@ -7,23 +7,25 @@ Implementation of a Vehicle Routing Problem (VRP) solution for a courier company
 1. Nguyen Van Quoc (Team Leader, Developer)
    - Project and Progress Management
    - MRA Development
-   - Optimize algorithm implementation (GA)
-   - Team Cordination
-   - Code Review 
+   - DAs Development
+   - Base Development
+   - All Optimizations
+   - Review and Testing system
 3. Tran Hung Quoc Tuan (Developer)
-   - User interface development
-   - Dashboard design
-   - Route visualization
-   - User interaction
-5. Mai Hoang Dai Vy (Developer)
-   - Delivery Agents (DAs) development
-   - Agent communication protocol implementation
-   - Business logic handling
+   - Ga Optimization ( Caculate Fitness)
+   - GA + OR (no modified fitness) Optimization
+   - GA + OR (modified fitness) Optimization
+   - Testing System
+   - Maintain the system
+5. Mai Hoang Dai Vy (Developer, Documentation)
+   - Data Research
+   - GUI Development
+   - Documentations
 7. Nguyen Ha Minh Chau (QA and Documentation)
    - Write test cases
-   - Create documentation
-   - Configuration management
-   - Support other team members
+   - Documentations
+   - Weekly Report
+   - Tracking works for team
 
 ## 🧮System Requirements
 - Python 3.12
