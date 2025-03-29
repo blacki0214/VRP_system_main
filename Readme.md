@@ -55,30 +55,10 @@ vrp_system/
    - Route visualization
    - Parameter settings
    - Real-time updates
-## 💽Flowchart of VRP
-![Flowchart of VRP](https://github.com/blacki0214/VRP_system/blob/main/flowchart.png)
-
-## 💽System Sequence Diagram Design
-![System Sequence Diagram Design](https://github.com/blacki0214/VRP_system/blob/main/system_sequence_diagram.png)
-
-## 💽Performance Monitoring Flow.png
-![Performance Monitoring Flow](https://github.com/blacki0214/VRP_system/blob/main/performance_monitoring_flow.png)
-
-
-## 🗺️Communication System Architechture
-![Communication System Architechture](https://github.com/blacki0214/VRP_system/blob/main/communicate_flow.png)
-
 
 ## 💻Setup Instructions
-1. Clone repository
-2. Install dependencies
-3. Run tests
-4. Start application
-
-## 📋Development Guidelines
-- Documentation: Google style docstrings
-- Testing: pytest
-- Git workflow: feature branches + pull requests
+1. Intall all packages (pip install -m requirements.txt)
+3. Run the GUI (python run.py --gui)
 
 ## ⌚Timeline
 - Week 2: Project Setup and Planning
