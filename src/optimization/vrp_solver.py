@@ -66,8 +66,15 @@ class VRPSolver:
                 
                 # Update main window scores if available
                 if hasattr(self, 'main_window'):
-                    scores = optimizer.calculate_route_comparison_score(solution)
+                    scores = {
+                        self._get_method_display_name(method): optimizer.calculate_route_comparison_score(solution)
+                    }
                     self.main_window.update_scores(scores)
+                
+                # Print comparison for single method
+                self._print_single_method_results(method, solution, optimizer)
+                
+                return solution
         else:
             # Run all methods
             print("\nRunning all optimization methods...")
@@ -274,3 +281,26 @@ class VRPSolver:
     def set_main_window(self, main_window):
         """Set the main window reference for score updates"""
         self.main_window = main_window
+
+    def _print_single_method_results(self, method: str, solution: List[Route], optimizer: BaseOptimizer):
+        """Print results for a single method"""
+        print(f"\n=== Results for {self._get_method_display_name(method)} ===")
+        
+        metrics = optimizer.evaluate_solution(solution)
+        comparison_scores = optimizer.calculate_route_comparison_score(solution)
+        
+        print(f"\nScores:")
+        print(f"  Composite Score: {comparison_scores['composite_score']:.4f}")
+        print(f"  Detailed Scores:")
+        print(f"    - Distance Efficiency: {comparison_scores['distance_score']:.4f}")
+        print(f"    - Cost Efficiency: {comparison_scores['cost_efficiency_score']:.4f}")
+        print(f"    - Capacity Utilization: {comparison_scores['capacity_utilization_score']:.4f}")
+        print(f"    - Parcel Efficiency: {comparison_scores['parcel_efficiency_score']:.4f}")
+        print(f"    - Route Structure: {comparison_scores['route_structure_score']:.4f}")
+        
+        print(f"\nRoute Metrics:")
+        print(f"  - Parcels: {metrics['parcels_delivered']}")
+        print(f"  - Cost: ${metrics['total_cost']:.2f}")
+        print(f"  - Distance: {metrics['total_distance']:.2f} km")
+        print(f"  - Routes: {metrics['num_routes']}")
+        print(f"  - Avg Load Factor: {metrics['avg_load_factor']*100:.1f}%")

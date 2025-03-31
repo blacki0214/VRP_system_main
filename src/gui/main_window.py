@@ -311,6 +311,13 @@ class MainWindow:
             # Schedule visualization update in main thread
             self.root.after(0, self._update_visualization, solution)
             
+            # Display detailed solution information
+            self.root.after(0, self._display_solution, solution)
+            
+            # Log success message
+            method_name = self.solver._get_method_display_name(method) if method else "All methods"
+            self.log_message(f"✅ {method_name} optimization completed successfully!")
+            
         except Exception as e:
             # Schedule error handling in main thread
             self.root.after(0, self._handle_optimization_error, str(e))

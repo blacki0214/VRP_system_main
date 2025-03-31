@@ -105,14 +105,10 @@ class RouteVisualizer:
         """Plot routes with improved styling"""
         self.routes = routes
         
-        # Schedule the actual plotting in the main thread
-        self.root.after(0, self._do_plot_routes)
-
-    def _do_plot_routes(self):
-        """Perform the actual route plotting in the main thread"""
+        # Clear any existing routes
         self.route_ax.clear()
         
-        # Use a better color scheme
+        # Use a better color scheme for routes
         colors = plt.cm.tab20(np.linspace(0, 1, len(self.routes)))
         
         # Plot cities with improved markers
@@ -126,17 +122,50 @@ class RouteVisualizer:
         self.route_ax.grid(True, linestyle='--', alpha=0.7)
         self.route_ax.set_aspect('equal')
         
-        # Add route selection handler
+        # Update route selection handler
         self.route_listbox.delete(0, tk.END)
         for i, route in enumerate(self.routes):
             self.route_listbox.insert(tk.END, f"Route {route.vehicle_id}")
-            
+        
+        # Bind selection event
         self.route_listbox.bind('<<ListboxSelect>>', self._on_route_select)
         
+        # Calculate and display solution metrics
+        total_distance = sum(route.total_distance for route in routes)
+        total_cost = sum(route.total_cost for route in routes)
+        total_parcels = sum(len(route.parcels) for route in routes)
+        avg_utilization = np.mean([route.get_total_weight()/route.vehicle_capacity 
+                                 for route in routes]) * 100
+        
+        metrics_text = (
+            f"Solution Metrics:\n"
+            f"Routes: {len(routes)}\n"
+            f"Distance: {total_distance:.2f} km\n"
+            f"Cost: ${total_cost:.2f}\n"
+            f"Parcels: {total_parcels}\n"
+            f"Avg Utilization: {avg_utilization:.1f}%"
+        )
+        
+        # Add metrics text box
+        self.route_ax.text(
+            0.02, 0.98, metrics_text,
+            transform=self.route_ax.transAxes,
+            bbox=dict(
+                boxstyle='round,pad=0.5',
+                fc='white',
+                ec='gray',
+                alpha=0.9
+            ),
+            verticalalignment='top',
+            fontsize=10,
+            zorder=7
+        )
+        
         # Update canvas
+        self.route_fig.tight_layout()
         self.route_canvas.draw()
         
-        # Update info panel
+        # Update info panel with overall solution information
         self.update_info(self.routes)
 
     def _plot_cities(self):
