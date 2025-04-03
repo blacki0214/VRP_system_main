@@ -173,7 +173,7 @@ class BaseOptimizer(ABC):
                 'composite_score': 0.0
             }
 
-        # 1. Distance Score (lower is better)
+        # 1. Distance Score (Higher is better)
         total_distance = sum(route.total_distance for route in routes)
         total_parcels = sum(len(route.parcels) for route in routes)
         avg_distance_per_parcel = total_distance / total_parcels if total_parcels > 0 else float('inf')
@@ -193,7 +193,7 @@ class BaseOptimizer(ABC):
             if capacity > 0:
                 utilization = route.get_total_weight() / capacity
                 # Penalize both under and over-utilization
-                utilization_score = 1 - abs(0.85 - min(utilization, 1.0))  # 85% utilization is ideal, cap at 100%
+                utilization_score = 1 - abs(0.85 - min(utilization, 1.0))  # 85% utilization is ideal, to make the vehicle more efficient
                 utilization_scores.append(utilization_score)
         capacity_utilization_score = sum(utilization_scores) / len(utilization_scores) if utilization_scores else 0
 
